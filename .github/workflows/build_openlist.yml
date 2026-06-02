@@ -1,0 +1,60 @@
+name: 编译魔改OpenList(arm64)-AListLite
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉取 安卓壳工程 AListLiteAndroid
+      - name: 拉取AListLiteAndroid
+        uses: actions/checkout@v4
+        with:
+          repository: LeoHaoVIP/AListLiteAndroid
+          path: android
+
+      # 2. 拉取 你的魔改OpenList源码
+      - name: 拉取魔改OpenList
+        uses: actions/checkout@v4
+        with:
+          repository: xmm2022/openlist-guangyapan-src
+          path: openlist
+
+      # 3. 安装Go环境，编译安卓arm64二进制
+      - name: 安装Go
+        uses: setup-go@v5
+        with:
+          go-version: 1.21
+          cache: false
+
+      - name: 编译魔改OpenList(Android arm64)
+        run: |
+          cd openlist
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o openlist main.go
+          chmod +x openlist
+
+      # 4. 自动放入 assets（这个项目自带目录！不用手动建！）
+      - name: 集成二进制
+        run: |
+          cp openlist/openlist android/app/src/main/assets/openlist
+          ls -lh android/app/src/main/assets/
+
+      # 5. 编译安卓APK
+      - name: 编译APK
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: 构建Release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      # 6. 上传最终APK
+      - name: 上传成品
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenList-MoGai-arm64
+          path: android/app/build/outputs/apk/release/*.apk
