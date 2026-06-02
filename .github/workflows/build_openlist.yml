@@ -8,21 +8,21 @@ jobs:
     steps:
       # 1. 拉取 安卓壳工程 AListLiteAndroid
       - name: 拉取AListLiteAndroid
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4  # 规范格式：actions/checkout@v4
         with:
           repository: LeoHaoVIP/AListLiteAndroid
           path: android
 
       # 2. 拉取 你的魔改OpenList源码
       - name: 拉取魔改OpenList
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4  # 规范格式
         with:
           repository: xmm2022/openlist-guangyapan-src
           path: openlist
 
-      # 3. 安装Go环境，编译安卓arm64二进制
+      # 3. 安装Go环境（修复核心格式错误：actions/setup-go@v5）
       - name: 安装Go
-        uses: setup-go@v5
+        uses: actions/setup-go@v5  # 正确格式！补全actions/前缀
         with:
           go-version: 1.21
           cache: false
@@ -39,9 +39,9 @@ jobs:
           cp openlist/openlist android/app/src/main/assets/openlist
           ls -lh android/app/src/main/assets/
 
-      # 5. 编译安卓APK
-      - name: 编译APK
-        uses: actions/setup-java@v4
+      # 5. 编译安卓APK（规范Action格式）
+      - name: 配置JDK17
+        uses: actions/setup-java@v4  # 规范格式
         with:
           java-version: 17
           distribution: temurin
@@ -52,9 +52,9 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      # 6. 上传最终APK
+      # 6. 上传最终APK（规范Action格式）
       - name: 上传成品
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # 规范格式
         with:
           name: OpenList-MoGai-arm64
           path: android/app/build/outputs/apk/release/*.apk
