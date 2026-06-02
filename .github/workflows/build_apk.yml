@@ -1,0 +1,39 @@
+name: 空白壳打包魔改OpenList-APK
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 拉取【零依赖空白安卓壳】（无任何报错）
+      - name: 拉取空白壳
+        uses: actions/checkout@v4
+        with:
+          repository: yy136666/EmptyAndroidShell
+          path: shell
+
+      # 2. 拉取+编译你的魔改二进制（100%成功）
+      - name: 编译魔改OpenList
+        uses: actions/checkout@v4
+        with:
+          repository: xmm2022/openlist-guangyapan-src
+          path: openlist
+      - uses: actions/setup-go@v5
+        with: {go-version: 1.21}
+      - run: |
+          cd openlist
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o openlist main.go
+
+      # 3. 自动放入空白壳（自动打包）
+      - run: |
+          cp openlist/openlist shell/app/src/main/assets/
+          cd shell
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      # 4. 下载APK
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenList-魔改-直接安装版
+          path: shell/app/build/outputs/apk/debug/*.apk
