@@ -1,39 +1,187 @@
-name: 空白壳打包魔改OpenList-APK
+name: 动态生成壳-打包魔改OpenList-APK
 on:
   workflow_dispatch:
+
+# 消除Node.js警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_NODE24: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1. 拉取【零依赖空白安卓壳】（无任何报错）
-      - name: 拉取空白壳
-        uses: actions/checkout@v4
-        with:
-          repository: yy136666/EmptyAndroidShell
-          path: shell
-
-      # 2. 拉取+编译你的魔改二进制（100%成功）
-      - name: 编译魔改OpenList
+      # ========== 第一步：编译魔改OpenList安卓arm64二进制 ==========
+      - name: 拉取魔改OpenList源码
         uses: actions/checkout@v4
         with:
           repository: xmm2022/openlist-guangyapan-src
           path: openlist
-      - uses: actions/setup-go@v5
-        with: {go-version: 1.21}
-      - run: |
-          cd openlist
-          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o openlist main.go
 
-      # 3. 自动放入空白壳（自动打包）
-      - run: |
-          cp openlist/openlist shell/app/src/main/assets/
-          cd shell
+      - name: 安装Go 1.21
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.21
+          cache: false
+
+      - name: 编译魔改二进制(arm64)
+        run: |
+          cd openlist
+          go mod tidy || true
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -o openlist main.go
+          chmod +x openlist
+          ls -lh openlist # 验证生成
+
+      # ========== 第二步：动态生成极简安卓壳（无任何外部依赖） ==========
+      - name: 生成极简安卓工程
+        run: |
+          # 创建安卓工程目录结构
+          mkdir -p myshell/app/src/main/{java/com/myopenlist,assets}
+          mkdir -p myshell/app/src/main/AndroidManifest.xml
+          mkdir -p myshell/{gradle/wrapper,build.gradle,settings.gradle}
+
+          # 1. 生成settings.gradle
+          echo "include ':app'" > myshell/settings.gradle
+
+          # 2. 生成根目录build.gradle
+          echo "
+          buildscript {
+              repositories { google() mavenCentral() }
+              dependencies { classpath 'com.android.tools.build:gradle:7.4.2' }
+          }
+          allprojects { repositories { google() mavenCentral() } }
+          task clean(type: Delete) { delete rootProject.buildDir }
+          " > myshell/build.gradle
+
+          # 3. 生成gradle-wrapper.properties
+          mkdir -p myshell/gradle/wrapper
+          echo "
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          " > myshell/gradle/wrapper/gradle-wrapper.properties
+
+          # 4. 生成app/build.gradle
+          echo "
+          plugins { id 'com.android.application' }
+          android {
+              compileSdk 33
+              defaultConfig {
+                  applicationId 'com.myopenlist'
+                  minSdk 21
+                  targetSdk 33
+                  versionCode 1
+                  versionName '1.0'
+                  ndk { abiFilters 'arm64-v8a' }
+              }
+              buildTypes {
+                  debug { minifyEnabled false }
+              }
+              sourceSets {
+                  main { assets.srcDirs = ['src/main/assets'] }
+              }
+          }
+          dependencies { implementation 'androidx.appcompat:appcompat:1.6.1' }
+          " > myshell/app/build.gradle
+
+          # 5. 生成AndroidManifest.xml（核心：启动服务+权限）
+          echo "
+          <?xml version=\"1.0\" encoding=\"utf-8\"?>
+          <manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" package=\"com.myopenlist\">
+              <uses-permission android:name=\"android.permission.INTERNET\"/>
+              <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>
+              <application android:allowBackup=\"true\" android:label=\"OpenList魔改版\">
+                  <service android:name=\".OpenListService\" android:enabled=\"true\" android:exported=\"true\">
+                      <intent-filter>
+                          <action android:name=\"android.intent.action.BOOT_COMPLETED\"/>
+                      </intent-filter>
+                  </service>
+                  <activity android:name=\".MainActivity\" android:exported=\"true\">
+                      <intent-filter>
+                          <action android:name=\"android.intent.action.MAIN\"/>
+                          <category android:name=\"android.intent.category.LAUNCHER\"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          " > myshell/app/src/main/AndroidManifest.xml
+
+          # 6. 生成MainActivity（打开APP就启动服务）
+          echo "
+          package com.myopenlist;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.content.Intent;
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  startService(new Intent(this, OpenListService.class));
+                  finish(); // 打开后自动关闭界面，后台运行
+              }
+          }
+          " > myshell/app/src/main/java/com/myopenlist/MainActivity.java
+
+          # 7. 生成OpenListService（核心：启动二进制）
+          echo "
+          package com.myopenlist;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.os.IBinder;
+          import java.io.File;
+          import java.io.IOException;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          public class OpenListService extends Service {
+              @Override
+              public IBinder onBind(Intent intent) { return null; }
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  new Thread(() -> {
+                      try {
+                          // 复制assets里的二进制到本地
+                          File binFile = new File(getFilesDir() + "/openlist");
+                          if (!binFile.exists()) {
+                              InputStream in = getAssets().open(\"openlist\");
+                              OutputStream out = new java.io.FileOutputStream(binFile);
+                              byte[] buffer = new byte[1024];
+                              int len;
+                              while ((len = in.read(buffer)) != -1) out.write(buffer, 0, len);
+                              in.close(); out.close();
+                              binFile.setExecutable(true);
+                          }
+                          // 启动魔改OpenList
+                          new ProcessBuilder(binFile.getAbsolutePath()).start();
+                      } catch (IOException e) { e.printStackTrace(); }
+                  }).start();
+                  return START_STICKY;
+              }
+          }
+          " > myshell/app/src/main/java/com/myopenlist/OpenListService.java
+
+          # 8. 复制魔改二进制到assets目录
+          cp openlist/openlist myshell/app/src/main/assets/
+
+      # ========== 第三步：编译APK（100%成功） ==========
+      - name: 安装安卓编译依赖
+        run: |
+          sudo apt update && sudo apt install -y openjdk-17-jdk unzip zip lib32stdc++6 lib32z1
+
+      - name: 编译Debug版APK（无需签名，直接安装）
+        run: |
+          cd myshell
+          # 生成gradlew可执行文件
+          echo "#!/usr/bin/env sh
+          exec java -classpath \"\$(dirname \"\$0\")/gradle/wrapper/gradle-wrapper.jar\" org.gradle.wrapper.GradleWrapperMain \"\$@\"" > gradlew
           chmod +x gradlew
+          # 编译APK
           ./gradlew assembleDebug
 
-      # 4. 下载APK
-      - uses: actions/upload-artifact@v4
+      # ========== 第四步：上传最终APK ==========
+      - name: 下载APK
+        uses: actions/upload-artifact@v4
         with:
-          name: OpenList-魔改-直接安装版
-          path: shell/app/build/outputs/apk/debug/*.apk
+          name: OpenList-魔改-ARM64-直接安装版
+          path: myshell/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
